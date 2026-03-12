@@ -1,20 +1,24 @@
 ---
 name: deep-research
-description: Conduct deep research from a single prompt — collects 200+ sources, writes a structured markdown report with citations, deploys to GitHub, then runs citation QA and document optimization. Triggers on "deep research", "research report", "write a research report", "investigate and write", "/deep-research".
+description: Conduct deep research from a single prompt — collects 50+ sources (default) or 200+ sources (deep mode), writes a structured markdown report with citations, deploys to GitHub, then runs citation QA and document optimization. Triggers on "deep research", "research report", "write a research report", "investigate and write", "/deep-research".
 ---
 
 # Deep Research
 
 From a single prompt, this skill runs the full research pipeline:
 
-1. **Research** — collect 200+ reputable sources via web search and content extraction
+1. **Research** — collect 50+ sources by default, 200+ in deep mode
 2. **Write** — produce a structured 400+ line markdown report with inline citations
 3. **Deploy** — commit the report to a specified GitHub repo and folder
-4. **Citation QA** — verify every link works, check citation accuracy, fix discrepancies
+4. **Citation QA** — spot-check all citations; only fully verify ones flagged as uncertain
 5. **Optimize** — compress the document 50% using clearer, shorter sentences and quantitative framing
 6. **Final commit** — push the polished, verified report
 
-**Principle:** Do not rush. Each phase must fully complete before the next begins. Quality over speed — the value is in the rigor, not the pace.
+**Principle:** Each phase must fully complete before the next begins. Default mode balances speed and quality. Use `--deep` for exhaustive research.
+
+**Modes:**
+- **Default** — 50+ sources, spot-check citation QA. Typical runtime: 15–25 min.
+- **Deep** (`--deep`) — 200+ sources, full citation verification. Typical runtime: 60–90 min.
 
 ## Phase 0: Collect Inputs
 
@@ -24,16 +28,20 @@ Before starting, confirm the following with the user (if not already provided in
 - **Target GitHub repo** — where to write the report (e.g., `aslesarenko/ai-agents-platform`)
 - **Output folder and filename** — where inside the repo (e.g., `research/lethal-trifecta-mitigations.md`)
 - **Report title** — used as the H1 heading
+- **Mode** — check if `--deep` was specified. Default is standard mode (50+ sources, spot-check QA).
 
 Acknowledge receipt and send a brief plan to the user before starting:
 
 > Starting deep research on: {topic}
 > Target: {repo}/{path}
-> I'll work through 6 phases and keep you updated at each milestone.
+> Mode: {Standard (15–25 min) | Deep (60–90 min)}
+> I'll work through 6 phases and send you a progress update at each milestone.
 
 ## Phase 1: Source Collection
 
-**Goal: Collect at minimum 200 reputable, distinct sources relevant to the topic.**
+**Goal: Collect reputable, distinct sources relevant to the topic.**
+- **Standard mode:** minimum 50 sources
+- **Deep mode (`--deep`):** minimum 200 sources
 
 ### 1a. Initial broad search
 
@@ -45,6 +53,8 @@ Run multiple web searches with varied query phrasings to cast a wide net:
 - Search for critique, counter-arguments, and known failure cases
 
 For each search result, fetch the full page content where relevant.
+
+Send progress update after every 10 sources found: "Phase 1 progress: {N} sources collected so far."
 
 ### 1b. Deep dive on promising sources
 
@@ -72,7 +82,7 @@ Only include sources that meet these criteria:
 - Accessible via URL (not paywalled without abstract)
 - Published within a reasonable recency window (prefer last 3 years, older only if foundational)
 
-**Do not proceed to Phase 2 until you have at least 200 sources catalogued.**
+**Do not proceed to Phase 2 until you have reached the source target for your mode.**
 
 Send progress update: "Phase 1 complete: collected {N} sources across {M} categories."
 
@@ -115,7 +125,7 @@ Build a logical outline that:
 
 ### Writing principles
 
-- Every factual claim must have an inline citation: `[N]`
+- Every factual claim must have an inline citation: `[[N]](url)` where `url` is the source URL from the Sources section
 - Use short, declarative sentences. Avoid passive voice.
 - Lead with the most important information in each section
 - Use numbers whenever possible: percentages, benchmarks, counts, dates
@@ -151,8 +161,9 @@ Build a logical outline that:
 
 ### Citation format
 
-Inline: `[N]` immediately after the sentence containing the claim.
-Sources section at the end: sequential numbering `[1]`, `[2]`, etc.
+Inline: `[[N]](url)` immediately after the sentence containing the claim, where `url` is the full source URL. This makes every citation a clickable link directly to the source.
+
+Sources section at the end: sequential numbering `[1]`, `[2]`, etc. — serves as a full bibliography and fallback reference. The clickable inline citations are the primary navigation mechanism; the Sources section is secondary.
 
 ### Length target
 
@@ -168,11 +179,11 @@ Aim for 400–600 lines. If the topic warrants more, write more — do not artif
 
 ```bash
 cd /workspace/group
-git clone https://github.com/{repo}.git repo-work
+gh repo clone {repo} repo-work
 cd repo-work
 ```
 
-If the repo is already cloned in the workspace, use it directly.
+If the repo is already cloned in the workspace, use it directly. `gh` handles authentication via `GH_TOKEN` automatically.
 
 ### 4b. Write the file
 
@@ -188,8 +199,10 @@ git config user.email "andy@nanoclaw"
 git config user.name "Andy"
 git add {path}
 git commit -m "research: add {title} draft"
-git push
+gh repo sync  # or: git push
 ```
+
+For push, prefer `git push` — `gh` authentication via `GH_TOKEN` is active so it will work. Use `gh auth status` to verify if push fails.
 
 ### 4d. Report the link
 
@@ -199,11 +212,15 @@ Send the user the GitHub URL to the committed file:
 
 ## Phase 5: Citation QA
 
-**Goal: Verify every citation is accurate — the link works AND the cited text matches the source.**
+**Goal: Verify citations are accurate — links work AND cited text matches the source.**
 
-This phase is sequential and methodical. Do not batch or skip steps.
+Approach depends on mode:
+- **Standard mode:** Spot-check only. Verify all citations that contain specific statistics, percentages, benchmark numbers, or named claims. Skip citations that are clearly general background references.
+- **Deep mode (`--deep`):** Full verification. Check every citation individually.
 
-### 5a. For each citation [N]:
+Send progress update after every 10 citations checked: "Phase 5 progress: {N}/{total} citations verified."
+
+### 5a. For each citation to verify [[N]](url):
 
 1. **Fetch the URL** — try to read its content. If it 404s or is unreachable, mark as broken.
 2. **Read the citation context** — find the sentence(s) in the document that reference [N].
@@ -223,15 +240,14 @@ This phase is sequential and methodical. Do not batch or skip steps.
    - Search the rest of the document for related claims that may rely on the same incorrect assumption
    - Correct any propagated errors
 
-6. **Repeat** the process until all citations have been verified.
-
 ### 5b. Renumber citations
 
 After all corrections:
-- Ensure citation numbers are sequential starting from [1]
+- Ensure citation numbers are sequential starting from `[[1]](url)`
 - No gaps in numbering
-- Sources section matches inline citations exactly
-- Remove any orphaned citations (cited but no matching source entry)
+- Each inline `[[N]](url)` must have a matching `[N]` entry in the Sources section
+- Each `[N]` in the Sources section must appear at least once inline
+- Remove any orphaned citations
 
 ### 5c. Commit the QA'd version
 
@@ -303,23 +319,31 @@ For paywalled content, use the abstract/summary URL instead, or find a preprint/
 
 ### GitHub push fails
 
-Check `GH_TOKEN` is set:
+Check `GH_TOKEN` is set and `gh` is authenticated:
 ```bash
 echo $GH_TOKEN | head -c 10
+gh auth status
 ```
 
-Use token-authenticated remote:
+If `gh auth status` fails, authenticate via token:
 ```bash
-git remote set-url origin https://$GH_TOKEN@github.com/{repo}.git
+echo $GH_TOKEN | gh auth login --with-token
 ```
 
-### Fewer than 200 sources found
+Then retry the push:
+```bash
+git push
+```
+
+### Fewer than 50 sources found (standard) / 200 (deep)
 
 Expand search strategy:
 - Try Google Scholar queries: `site:scholar.google.com {topic}`
 - Search GitHub directly: `gh search repos {topic} --limit 30`
 - Check awesome-lists: search for `awesome {topic}` on GitHub
 - Look at references sections of the best sources found so far
+
+If the topic is genuinely narrow, note this and proceed with what was found.
 
 ### Report under 400 lines
 
