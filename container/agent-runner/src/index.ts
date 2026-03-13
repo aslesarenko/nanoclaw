@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  personalityPrompt?: string;
 }
 
 interface ContainerOutput {
@@ -373,6 +374,20 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // Compose system prompt from personality + globalClaudeMd
+  // Personality comes first (sets persona), globalClaudeMd second (operational instructions)
+  const promptParts: string[] = [];
+  if (containerInput.personalityPrompt) {
+    promptParts.push(containerInput.personalityPrompt);
+  }
+  if (globalClaudeMd) {
+    promptParts.push(globalClaudeMd);
+  }
+  const systemPromptAppend = promptParts.length > 0
+    ? promptParts.join('\n\n---\n\n')
+    : undefined;
+  log(`System prompt: personality=${!!containerInput.personalityPrompt} (${containerInput.personalityPrompt?.length ?? 0} chars), globalClaudeMd=${!!globalClaudeMd} (${globalClaudeMd?.length ?? 0} chars), combined=${systemPromptAppend?.length ?? 0} chars`);
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
@@ -396,8 +411,8 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+      systemPrompt: systemPromptAppend
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemPromptAppend }
         : undefined,
       allowedTools: [
         'Bash',

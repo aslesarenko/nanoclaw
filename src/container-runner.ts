@@ -43,6 +43,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  personalityPrompt?: string;
 }
 
 export interface ContainerOutput {
@@ -339,6 +340,13 @@ export async function runContainerAgent(
 
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
+    logger.debug(
+      {
+        hasPersonality: !!input.personalityPrompt,
+        promptLength: input.personalityPrompt?.length,
+      },
+      'Container input personality',
+    );
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';

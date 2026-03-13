@@ -52,6 +52,7 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { getPersonalityPrompt } from './personality.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -306,6 +307,7 @@ async function runAgent(
     : undefined;
 
   try {
+    const personalityPrompt = getPersonalityPrompt();
     const output = await runContainerAgent(
       group,
       {
@@ -315,6 +317,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        personalityPrompt,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),

@@ -79,6 +79,40 @@ export interface ResolvedIdentity {
   senderId: string;
 }
 
+// --- Personality Configuration ---
+
+export interface PersonalityConfig {
+  identity: PersonalityIdentity;
+  character?: PersonalityCharacter;
+  voice?: PersonalityVoice;
+  boundaries?: PersonalityBoundary[];
+}
+
+export interface PersonalityIdentity {
+  name: string;
+  origin_story?: string;
+  core_values?: string[];
+  areas_of_expertise?: string[];
+  hard_boundaries?: string[];
+}
+
+export interface PersonalityCharacter {
+  decision_making_style?: string;
+  intellectual_temperament?: string;
+  emotional_patterns?: string;
+}
+
+export interface PersonalityVoice {
+  default_tone?: string;
+  vocabulary_preferences?: string[];
+  communication_patterns?: string[];
+}
+
+export interface PersonalityBoundary {
+  category: string;
+  rule: string;
+}
+
 export interface ScheduledTask {
   id: string;
   group_folder: string;
