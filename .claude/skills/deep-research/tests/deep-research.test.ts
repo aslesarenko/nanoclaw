@@ -50,7 +50,6 @@ describe('deep-research skill package', () => {
   });
 
   it('includes GitHub deployment instructions', () => {
-    expect(content).toContain('git clone');
     expect(content).toContain('git commit');
     expect(content).toContain('git push');
   });

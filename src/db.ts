@@ -5,6 +5,8 @@ import path from 'path';
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { allMigrations } from './migrations/index.js';
+import { runMigrations } from './migrations.js';
 import {
   NewMessage,
   RegisteredGroup,
@@ -150,12 +152,42 @@ export function initDatabase(): void {
 
   // Migrate from JSON files if they exist
   migrateJsonState();
+
+  // Run versioned migrations (identity store, etc.)
+  runMigrations(db, allMigrations);
 }
 
-/** @internal - for tests only. Creates a fresh in-memory database. */
+/**
+ * @internal - for tests only. Creates a fresh in-memory database
+ * with the base schema and ALL migrations applied.
+ */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
   createSchema(db);
+  runMigrations(db, allMigrations);
+}
+
+/**
+ * @internal - for migration tests only. Creates a fresh in-memory database
+ * with the base schema and migrations applied up to (but not including)
+ * the given version. Use version 0 for the base schema with no migrations.
+ *
+ * This lets migration tests start from the correct pre-migration state:
+ *   _initTestDatabaseAtVersion(0)  → base schema only (for testing migration 001)
+ *   _initTestDatabaseAtVersion(1)  → base + migration 001 (for testing migration 002)
+ */
+export function _initTestDatabaseAtVersion(version: number): void {
+  db = new Database(':memory:');
+  createSchema(db);
+  const prior = allMigrations.filter((m) => m.version <= version);
+  if (prior.length > 0) {
+    runMigrations(db, prior);
+  }
+}
+
+/** @internal - for modules that manage their own tables. */
+export function _getDb(): Database.Database {
+  return db;
 }
 
 /**

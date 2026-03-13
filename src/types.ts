@@ -51,6 +51,32 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  resolvedIdentity?: ResolvedIdentity;
+}
+
+// --- Identity & Privilege ---
+
+export type PrivilegeLevel = 'owner' | 'colleague' | 'external';
+
+export interface PersonIdentity {
+  id: string;
+  displayName: string;
+  privilege: PrivilegeLevel;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SenderMapping {
+  senderId: string;
+  personId: string;
+  channel?: string;
+  addedAt: string;
+}
+
+export interface ResolvedIdentity {
+  person: PersonIdentity;
+  senderId: string;
 }
 
 export interface ScheduledTask {
