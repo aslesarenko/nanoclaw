@@ -100,9 +100,18 @@ launchctl print gui/$(id -u)/com.nanoclaw 2>&1 | head -5
 systemctl --user status nanoclaw --no-pager | head -10
 ```
 
-Check the log for migration output:
+Check the log for migration output. The log path is configured in the launchd plist — extract it dynamically rather than hardcoding:
+
+**macOS:**
 ```bash
-tail -20 ~/Library/Logs/nanoclaw.log 2>/dev/null || journalctl --user -u nanoclaw -n 20 --no-pager
+# Extract log path from plist, fall back to project-relative path
+LOG_FILE=$(grep -A1 'StandardOutPath' ~/Library/LaunchAgents/com.nanoclaw.plist 2>/dev/null | grep '<string>' | sed 's/.*<string>\(.*\)<\/string>.*/\1/' || echo "logs/nanoclaw.log")
+tail -20 "$LOG_FILE"
+```
+
+**Linux:**
+```bash
+journalctl --user -u nanoclaw -n 20 --no-pager
 ```
 
 Report success or failure to the user. If the service failed to start, check the log for migration errors — the database will be safe to retry since each migration is atomic.
@@ -155,8 +164,15 @@ systemctl --user start nanoclaw
 
 ### 4. Verify the rollback
 
+**macOS:**
 ```bash
-tail -20 ~/Library/Logs/nanoclaw.log 2>/dev/null || journalctl --user -u nanoclaw -n 20 --no-pager
+LOG_FILE=$(grep -A1 'StandardOutPath' ~/Library/LaunchAgents/com.nanoclaw.plist 2>/dev/null | grep '<string>' | sed 's/.*<string>\(.*\)<\/string>.*/\1/' || echo "logs/nanoclaw.log")
+tail -20 "$LOG_FILE"
+```
+
+**Linux:**
+```bash
+journalctl --user -u nanoclaw -n 20 --no-pager
 ```
 
 Confirm the service is running with the pre-release database. The `schema_migrations` table will reflect the previous migration state since the DB was restored from backup.
@@ -195,7 +211,16 @@ For Apple Container setups, check that the container runtime is running.
 
 ### Step 6 — Verify shows service not running
 Check the logs for errors:
+
+**macOS:**
 ```bash
-tail -50 ~/Library/Logs/nanoclaw.log 2>/dev/null || journalctl --user -u nanoclaw -n 50 --no-pager
+LOG_FILE=$(grep -A1 'StandardOutPath' ~/Library/LaunchAgents/com.nanoclaw.plist 2>/dev/null | grep '<string>' | sed 's/.*<string>\(.*\)<\/string>.*/\1/' || echo "logs/nanoclaw.log")
+tail -50 "$LOG_FILE"
 ```
+
+**Linux:**
+```bash
+journalctl --user -u nanoclaw -n 50 --no-pager
+```
+
 If the error is migration-related, follow "Restore from Backup". Otherwise, use `/debug` to investigate.

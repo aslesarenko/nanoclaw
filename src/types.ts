@@ -137,6 +137,26 @@ export interface TaskRunLog {
   error: string | null;
 }
 
+// --- Observability ---
+
+export type TraceType = 'message' | 'task';
+export type TraceStatus = 'success' | 'error' | 'timeout';
+
+export interface Trace {
+  traceId: string;
+  type: TraceType;
+  groupFolder: string;
+  chatJid: string;
+  sender: string | null;
+  channel: string | null;
+  status: TraceStatus;
+  durationMs: number;
+  error: string | null;
+  tokenCount: number | null; // placeholder — populated by future container instrumentation
+  toolCalls: number | null; // placeholder — populated by future container instrumentation
+  createdAt: string;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {

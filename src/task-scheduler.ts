@@ -19,6 +19,7 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+import { endTrace, startTrace } from './observability.js';
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -80,6 +81,8 @@ async function runTask(
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
+  const traceCtx = startTrace('task', task.group_folder, task.chat_jid);
+
   let groupDir: string;
   try {
     groupDir = resolveGroupFolderPath(task.group_folder);
@@ -99,6 +102,7 @@ async function runTask(
       result: null,
       error,
     });
+    endTrace(traceCtx, 'error', error);
     return;
   }
   fs.mkdirSync(groupDir, { recursive: true });
@@ -114,6 +118,7 @@ async function runTask(
   );
 
   if (!group) {
+    const groupError = `Group not found: ${task.group_folder}`;
     logger.error(
       { taskId: task.id, groupFolder: task.group_folder },
       'Group not found for task',
@@ -124,8 +129,9 @@ async function runTask(
       duration_ms: Date.now() - startTime,
       status: 'error',
       result: null,
-      error: `Group not found: ${task.group_folder}`,
+      error: groupError,
     });
+    endTrace(traceCtx, 'error', groupError);
     return;
   }
 
@@ -228,6 +234,8 @@ async function runTask(
     result,
     error,
   });
+
+  endTrace(traceCtx, error ? 'error' : 'success', error ?? undefined);
 
   const nextRun = computeNextRun(task);
   const resultSummary = error

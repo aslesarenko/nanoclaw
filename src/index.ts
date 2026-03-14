@@ -52,6 +52,7 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { endTrace, startTrace } from './observability.js';
 import { getPersonalityPrompt } from './personality.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
@@ -176,6 +177,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  // Start observability trace after early returns (no work to trace)
+  const traceCtx = startTrace('message', group.folder, chatJid, {
+    sender: missedMessages[0]?.sender,
+    channel: channel?.name,
+  });
+
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -207,6 +214,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  // End trace in the streaming callback when the agent signals completion,
+  // not after container exit (which can be delayed by IDLE_TIMEOUT ~30 min).
+  let traceEnded = false;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -227,16 +237,29 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
 
     if (result.status === 'success') {
+      if (!traceEnded) {
+        traceEnded = true;
+        endTrace(traceCtx, 'success');
+      }
       queue.notifyIdle(chatJid);
     }
 
     if (result.status === 'error') {
       hadError = true;
+      if (!traceEnded) {
+        traceEnded = true;
+        endTrace(traceCtx, 'error', result.error || undefined);
+      }
     }
   });
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
+
+  // Fallback: record trace if the container exited without streaming a final status
+  if (!traceEnded) {
+    endTrace(traceCtx, hadError ? 'error' : 'success');
+  }
 
   if (output === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
@@ -419,6 +442,15 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
+            // Record a trace for the piped message — near-zero duration since
+            // the host's work is just writing the IPC file. The container
+            // processes it asynchronously under the original container's trace.
+            const pipeTraceCtx = startTrace('message', group.folder, chatJid, {
+              sender: messagesToSend[0]?.sender,
+              channel: channel?.name,
+            });
+            endTrace(pipeTraceCtx, 'success');
+
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
