@@ -166,15 +166,18 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Gmail credentials directory (for Gmail MCP inside the container)
-  const homeDir = os.homedir();
-  const gmailDir = path.join(homeDir, '.gmail-mcp');
-  if (fs.existsSync(gmailDir)) {
-    mounts.push({
-      hostPath: gmailDir,
-      containerPath: '/home/node/.gmail-mcp',
-      readonly: false, // MCP may need to refresh OAuth tokens
-    });
+  // Gmail credentials directory — main group only (non-main groups
+  // should not have access to the owner's email account).
+  if (isMain) {
+    const homeDir = os.homedir();
+    const gmailDir = path.join(homeDir, '.gmail-mcp');
+    if (fs.existsSync(gmailDir)) {
+      mounts.push({
+        hostPath: gmailDir,
+        containerPath: '/home/node/.gmail-mcp',
+        readonly: false, // MCP may need to refresh OAuth tokens
+      });
+    }
   }
 
   // Per-group IPC namespace: each group gets its own IPC directory
@@ -229,6 +232,7 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  isMain: boolean,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -252,10 +256,13 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
-  // Inject GH_TOKEN if configured so the container can use `gh` CLI
-  const ghSecrets = readEnvFile(['GH_TOKEN']);
-  if (ghSecrets.GH_TOKEN) {
-    args.push('-e', `GH_TOKEN=${ghSecrets.GH_TOKEN}`);
+  // Inject GH_TOKEN only for main group — non-main groups should not
+  // have access to the owner's GitHub account.
+  if (isMain) {
+    const ghSecrets = readEnvFile(['GH_TOKEN']);
+    if (ghSecrets.GH_TOKEN) {
+      args.push('-e', `GH_TOKEN=${ghSecrets.GH_TOKEN}`);
+    }
   }
 
   // Runtime-specific args for host gateway resolution
@@ -298,7 +305,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, input.isMain);
 
   logger.debug(
     {
