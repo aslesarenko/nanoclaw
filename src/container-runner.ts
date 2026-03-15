@@ -239,6 +239,9 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Expose the container's port 4000 for the database explorer UI
+  args.push('-p', '4000:4000');
+
   // Route API traffic through the credential proxy (containers never see real secrets)
   args.push(
     '-e',
