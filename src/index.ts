@@ -55,7 +55,20 @@ import {
 import { endTrace, startTrace } from './observability.js';
 import { getPersonalityPrompt } from './personality.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import {
+  getSessionFloorPrivilege,
+  persistSessionFloor,
+  resolveSessionPrivilege,
+  splitMessagesByPrivilege,
+} from './privilege-resolver.js';
+import { getAllowedToolsForPrivilege } from './privilege-tools.js';
+import {
+  Channel,
+  NewMessage,
+  PrivilegeLevel,
+  RegisteredGroup,
+  ResolvedIdentity,
+} from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -166,8 +179,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
-  // For non-main groups, check if trigger is required and present
-  if (!isMainGroup && group.requiresTrigger !== false) {
+  const isPrivilegeAware = !isMainGroup && group.requiresTrigger !== false;
+
+  // For privilege-aware chats, check if trigger is required and present
+  if (isPrivilegeAware) {
     const allowlistCfg = loadSenderAllowlist();
     const hasTrigger = missedMessages.some(
       (m) =>
@@ -183,14 +198,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     channel: channel?.name,
   });
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
-
-  // Advance cursor so the piping path in startMessageLoop won't re-fetch
-  // these messages. Save the old cursor so we can roll back on error.
+  // Save the old cursor so we can roll back on error
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
-  saveState();
 
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
@@ -218,21 +227,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // not after container exit (which can be delayed by IDLE_TIMEOUT ~30 min).
   let traceEnded = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
+  /** Shared streaming output callback for all invocation modes. */
+  const onOutputCallback = async (result: ContainerOutput) => {
     if (result.result) {
       const raw =
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
 
@@ -251,7 +258,90 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         endTrace(traceCtx, 'error', result.error || undefined);
       }
     }
-  });
+  };
+
+  let output: 'success' | 'error';
+
+  if (isPrivilegeAware) {
+    // MODE 1: Privilege-aware — each mention gets sender's privilege,
+    // non-mentions batch at session floor privilege.
+    const sessionFloor = getSessionFloorPrivilege(group.folder, missedMessages);
+    persistSessionFloor(group.folder, sessionFloor);
+    const splitResult = splitMessagesByPrivilege(missedMessages, sessionFloor);
+
+    if (splitResult.segments.length === 0) {
+      await channel.setTyping?.(chatJid, false);
+      return true;
+    }
+
+    // Advance cursor for all messages up front
+    lastAgentTimestamp[chatJid] =
+      missedMessages[missedMessages.length - 1].timestamp;
+    saveState();
+
+    // Process each segment sequentially — session resume preserves
+    // conversation history across privilege-isolated invocations.
+    output = 'success';
+    for (const segment of splitResult.segments) {
+      const prompt = formatMessages(segment.messages, TIMEZONE);
+      const allowedTools = getAllowedToolsForPrivilege(segment.effectivePrivilege);
+
+      logger.info(
+        {
+          group: group.name,
+          privilege: segment.effectivePrivilege,
+          isMention: segment.isMentionTrigger,
+          messageCount: segment.messages.length,
+        },
+        'Processing privilege segment',
+      );
+
+      const segResult = await runAgent(
+        group,
+        prompt,
+        chatJid,
+        segment.effectivePrivilege,
+        allowedTools,
+        {
+          resolvedIdentity: segment.primaryResolvedIdentity,
+          sender: segment.primarySender,
+        },
+        onOutputCallback,
+      );
+
+      if (segResult === 'error') {
+        output = 'error';
+        break;
+      }
+    }
+  } else {
+    // MODE 2: Every-message — privilege is session floor (min across all participants).
+    const sessionResult = resolveSessionPrivilege(missedMessages, group.folder);
+    persistSessionFloor(group.folder, sessionResult.effectivePrivilege);
+    const effectivePrivilege: PrivilegeLevel = isMainGroup
+      ? 'owner'
+      : sessionResult.effectivePrivilege;
+    const allowedTools = getAllowedToolsForPrivilege(effectivePrivilege);
+    const prompt = formatMessages(missedMessages, TIMEZONE);
+
+    // Advance cursor
+    lastAgentTimestamp[chatJid] =
+      missedMessages[missedMessages.length - 1].timestamp;
+    saveState();
+
+    output = await runAgent(
+      group,
+      prompt,
+      chatJid,
+      effectivePrivilege,
+      allowedTools,
+      {
+        resolvedIdentity: sessionResult.lastResolvedIdentity,
+        sender: sessionResult.lastSender,
+      },
+      onOutputCallback,
+    );
+  }
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -262,8 +352,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
-    // the user got their response and re-processing would send duplicates.
     if (outputSentToUser) {
       logger.warn(
         { group: group.name },
@@ -271,7 +359,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     }
-    // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
     logger.warn(
@@ -288,6 +375,12 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  privilegeLevel: PrivilegeLevel,
+  allowedTools: string[],
+  senderInfo: {
+    resolvedIdentity: ResolvedIdentity | null;
+    sender: string;
+  } | null,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
@@ -341,6 +434,15 @@ async function runAgent(
         isMain,
         assistantName: ASSISTANT_NAME,
         personalityPrompt,
+        // Extension C: sender identity and privilege gating
+        senderIdentity: senderInfo?.resolvedIdentity
+          ? {
+              personId: senderInfo.resolvedIdentity.person.id,
+              displayName: senderInfo.resolvedIdentity.person.displayName,
+            }
+          : undefined,
+        privilegeLevel,
+        allowedTools,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -441,7 +543,46 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // Resolve privilege for the piped message so the agent-runner
+          // can gate tools dynamically per query() call (Extension C).
+          const pipeIsPrivilegeAware =
+            !isMainGroup && group.requiresTrigger !== false;
+          let pipePrivilege: PrivilegeLevel;
+          let pipeAllowedTools: string[];
+
+          if (pipeIsPrivilegeAware) {
+            // Use session floor for piped messages in privilege-aware chats.
+            // Individual mention segmentation happens when the container is
+            // spawned fresh (processGroupMessages); for piped messages the
+            // floor is the safest privilege level.
+            const floor = getSessionFloorPrivilege(
+              group.folder,
+              messagesToSend,
+            );
+            persistSessionFloor(group.folder, floor);
+            pipePrivilege = floor;
+            pipeAllowedTools = getAllowedToolsForPrivilege(floor);
+          } else {
+            const sessionResult = resolveSessionPrivilege(
+              messagesToSend,
+              group.folder,
+            );
+            persistSessionFloor(group.folder, sessionResult.effectivePrivilege);
+            pipePrivilege = isMainGroup
+              ? 'owner'
+              : sessionResult.effectivePrivilege;
+            pipeAllowedTools =
+              getAllowedToolsForPrivilege(pipePrivilege);
+          }
+
+          if (
+            queue.sendMessage(
+              chatJid,
+              formatted,
+              pipePrivilege,
+              pipeAllowedTools,
+            )
+          ) {
             // Record a trace for the piped message — near-zero duration since
             // the host's work is just writing the IPC file. The container
             // processes it asynchronously under the original container's trace.
@@ -452,7 +593,7 @@ async function startMessageLoop(): Promise<void> {
             endTrace(pipeTraceCtx, 'success');
 
             logger.debug(
-              { chatJid, count: messagesToSend.length },
+              { chatJid, count: messagesToSend.length, privilege: pipePrivilege },
               'Piped messages to active container',
             );
             lastAgentTimestamp[chatJid] =

@@ -111,6 +111,69 @@ function emitOutputMarker(
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }
 
+describe('ContainerInput privilege fields', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('accepts privilegeLevel: owner without error', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      { ...testInput, privilegeLevel: 'owner', allowedTools: ['Bash', 'Read'] },
+      () => {},
+    );
+
+    emitOutputMarker(fakeProc, { status: 'success', result: 'ok' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+  });
+
+  it('accepts privilegeLevel: colleague without error', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      { ...testInput, privilegeLevel: 'colleague' },
+      () => {},
+    );
+
+    emitOutputMarker(fakeProc, { status: 'success', result: 'ok' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+  });
+
+  it('accepts senderIdentity without error', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      {
+        ...testInput,
+        privilegeLevel: 'owner',
+        senderIdentity: { personId: 'person-1', displayName: 'Alice' },
+      },
+      () => {},
+    );
+
+    emitOutputMarker(fakeProc, { status: 'success', result: 'ok' });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+  });
+});
+
 describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
