@@ -20,7 +20,8 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { endTrace, startTrace } from './observability.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { getAllowedToolsForPrivilege } from './privilege-tools.js';
+import { PrivilegeLevel, RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -185,6 +186,12 @@ async function runTask(
         isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
+        // Extension C: tasks inherit creator's privilege for tool gating.
+        // Defaults to 'owner' for legacy tasks created before Extension C.
+        privilegeLevel: (task.creator_privilege as PrivilegeLevel) || 'owner',
+        allowedTools: getAllowedToolsForPrivilege(
+          (task.creator_privilege as PrivilegeLevel) || 'owner',
+        ),
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),

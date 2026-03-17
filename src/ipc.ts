@@ -164,6 +164,9 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    // Extension C: creator identity for task privilege inheritance
+    creator_sender?: string;
+    creator_privilege?: string;
     // For register_group
     jid?: string;
     name?: string;
@@ -265,6 +268,11 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
+          // Extension C: persist creator identity for privilege-gated execution.
+          // The agent-runner passes these via the IPC MCP tool when the agent
+          // creates tasks; defaults to owner for backward compat.
+          creator_sender: data.creator_sender ?? null,
+          creator_privilege: (data.creator_privilege as 'owner' | 'colleague' | 'external') ?? 'owner',
         });
         logger.info(
           { taskId, sourceGroup, targetFolder, contextMode },

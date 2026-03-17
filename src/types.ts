@@ -30,6 +30,7 @@ export interface AllowedRoot {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  dbExplorerPort?: number; // Host port to expose container's port 4000 (db-explorer)
 }
 
 export interface RegisteredGroup {
@@ -126,6 +127,10 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  /** Sender ID of the task creator (NULL for legacy tasks created before Extension C). */
+  creator_sender?: string | null;
+  /** Privilege level at creation time — gates tools during task execution. */
+  creator_privilege?: PrivilegeLevel | null;
 }
 
 export interface TaskRunLog {

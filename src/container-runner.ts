@@ -29,7 +29,7 @@ import {
 import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import { PrivilegeLevel, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -44,6 +44,15 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   personalityPrompt?: string;
+  /** Informational: identity of the sender who triggered this invocation. */
+  senderIdentity?: {
+    personId: string;
+    displayName: string;
+  };
+  /** Effective privilege level for this invocation — gates tools and mounts. */
+  privilegeLevel?: PrivilegeLevel;
+  /** If provided, overrides the hardcoded tool list in agent-runner. */
+  allowedTools?: string[];
 }
 
 export interface ContainerOutput {
@@ -166,9 +175,12 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Gmail credentials directory — main group only (non-main groups
-  // should not have access to the owner's email account).
-  if (isMain) {
+  // Gmail credentials directory — always mounted so that dynamic privilege
+  // changes (via piped IPC messages) don't require container re-spawning.
+  // Access is gated by allowedTools in the SDK query() call: if mcp__gmail__*
+  // isn't in the tool list, the agent can't invoke Gmail even though
+  // credentials are on the filesystem.
+  {
     const homeDir = os.homedir();
     const gmailDir = path.join(homeDir, '.gmail-mcp');
     if (fs.existsSync(gmailDir)) {
@@ -207,7 +219,10 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
+  // Always sync agent-runner source to pick up interface changes (e.g. new
+  // ContainerInput fields). Previously only copied when the target didn't
+  // exist, which left stale copies after host-side updates.
+  if (fs.existsSync(agentRunnerSrc)) {
     fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }
   mounts.push({
@@ -233,14 +248,16 @@ function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
   isMain: boolean,
+  privilegeLevel?: PrivilegeLevel,
+  dbExplorerPort?: number,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Expose the container's port 4000 for the database explorer UI
-  args.push('-p', '4000:4000');
+  // Expose the container's port 4000 for the database explorer UI if configured
+  if (dbExplorerPort) args.push('-p', `${dbExplorerPort}:4000`);
 
   // Route API traffic through the credential proxy (containers never see real secrets)
   args.push(
@@ -259,9 +276,11 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
-  // Inject GH_TOKEN only for main group — non-main groups should not
-  // have access to the owner's GitHub account.
-  if (isMain) {
+  // Inject GH_TOKEN only for owner-privilege invocations — non-owner
+  // privilege levels should not have access to the owner's GitHub account.
+  // Falls back to isMain for backward compat when privilegeLevel is unset.
+  const effectivePriv = privilegeLevel ?? (isMain ? 'owner' : 'external');
+  if (effectivePriv === 'owner') {
     const ghSecrets = readEnvFile(['GH_TOKEN']);
     if (ghSecrets.GH_TOKEN) {
       args.push('-e', `GH_TOKEN=${ghSecrets.GH_TOKEN}`);
@@ -308,7 +327,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName, input.isMain);
+  const containerArgs = buildContainerArgs(mounts, containerName, input.isMain, input.privilegeLevel, group.containerConfig?.dbExplorerPort);
 
   logger.debug(
     {

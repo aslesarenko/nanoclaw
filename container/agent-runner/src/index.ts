@@ -28,6 +28,24 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   personalityPrompt?: string;
+  /** Informational: identity of the sender who triggered this invocation. */
+  senderIdentity?: {
+    personId: string;
+    displayName: string;
+  };
+  /** Effective privilege level for this invocation — gates tools and mounts. */
+  privilegeLevel?: string;
+  /** If provided, overrides the hardcoded tool list. */
+  allowedTools?: string[];
+}
+
+/** Parsed IPC message with optional privilege override fields. */
+interface IpcMessage {
+  text: string;
+  /** If provided, overrides allowedTools for the next query() call. */
+  allowedTools?: string[];
+  /** Informational privilege level for logging. */
+  privilegeLevel?: string;
 }
 
 interface ContainerOutput {
@@ -274,21 +292,25 @@ function shouldClose(): boolean {
  * Drain all pending IPC input messages.
  * Returns messages found, or empty array.
  */
-function drainIpcInput(): string[] {
+function drainIpcInput(): IpcMessage[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
     const files = fs.readdirSync(IPC_INPUT_DIR)
       .filter(f => f.endsWith('.json'))
       .sort();
 
-    const messages: string[] = [];
+    const messages: IpcMessage[] = [];
     for (const file of files) {
       const filePath = path.join(IPC_INPUT_DIR, file);
       try {
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         fs.unlinkSync(filePath);
         if (data.type === 'message' && data.text) {
-          messages.push(data.text);
+          messages.push({
+            text: data.text,
+            allowedTools: data.allowedTools,
+            privilegeLevel: data.privilegeLevel,
+          });
         }
       } catch (err) {
         log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
@@ -304,9 +326,10 @@ function drainIpcInput(): string[] {
 
 /**
  * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
+ * Returns a merged IpcMessage (text joined, last allowedTools/privilegeLevel wins),
+ * or null if _close.
  */
-function waitForIpcMessage(): Promise<string | null> {
+function waitForIpcMessage(): Promise<IpcMessage | null> {
   return new Promise((resolve) => {
     const poll = () => {
       if (shouldClose()) {
@@ -315,7 +338,13 @@ function waitForIpcMessage(): Promise<string | null> {
       }
       const messages = drainIpcInput();
       if (messages.length > 0) {
-        resolve(messages.join('\n'));
+        // Merge: join text, last message's privilege fields win
+        const last = messages[messages.length - 1];
+        resolve({
+          text: messages.map(m => m.text).join('\n'),
+          allowedTools: last.allowedTools,
+          privilegeLevel: last.privilegeLevel,
+        });
         return;
       }
       setTimeout(poll, IPC_POLL_MS);
@@ -354,9 +383,9 @@ async function runQuery(
       return;
     }
     const messages = drainIpcInput();
-    for (const text of messages) {
-      log(`Piping IPC message into active query (${text.length} chars)`);
-      stream.push(text);
+    for (const msg of messages) {
+      log(`Piping IPC message into active query (${msg.text.length} chars)`);
+      stream.push(msg.text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -414,7 +443,9 @@ async function runQuery(
       systemPrompt: systemPromptAppend
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemPromptAppend }
         : undefined,
-      allowedTools: [
+      // Use allowedTools from ContainerInput if provided (privilege-gated),
+      // otherwise fall back to the full default tool set for backward compat.
+      allowedTools: containerInput.allowedTools ?? [
         'Bash',
         'Read', 'Write', 'Edit', 'Glob', 'Grep',
         'WebSearch', 'WebFetch',
@@ -522,7 +553,7 @@ async function main(): Promise<void> {
   const pending = drainIpcInput();
   if (pending.length > 0) {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
-    prompt += '\n' + pending.join('\n');
+    prompt += '\n' + pending.map(m => m.text).join('\n');
   }
 
   // Query loop: run query → wait for IPC message → run new query → repeat
@@ -559,8 +590,15 @@ async function main(): Promise<void> {
         break;
       }
 
-      log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
+      log(`Got new message (${nextMessage.text.length} chars, privilege: ${nextMessage.privilegeLevel ?? 'inherited'}, tools: ${nextMessage.allowedTools ? nextMessage.allowedTools.length : 'inherited'}), starting new query`);
+      // Update allowedTools for the next query if the IPC message carries them
+      if (nextMessage.allowedTools) {
+        containerInput = { ...containerInput, allowedTools: nextMessage.allowedTools };
+      }
+      if (nextMessage.privilegeLevel) {
+        containerInput = { ...containerInput, privilegeLevel: nextMessage.privilegeLevel };
+      }
+      prompt = nextMessage.text;
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
