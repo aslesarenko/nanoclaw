@@ -470,10 +470,13 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        gmail: {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-        },
+        // Only connect Gmail MCP when allowedTools includes it (privilege-gated)
+        ...(containerInput.allowedTools?.some(t => t.startsWith('mcp__gmail')) !== false ? {
+          gmail: {
+            command: 'npx',
+            args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
@@ -523,6 +526,7 @@ async function main(): Promise<void> {
     containerInput = JSON.parse(stdinData);
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
+    log(`Privilege: ${containerInput.privilegeLevel ?? 'not set'}, tools: ${containerInput.allowedTools?.length ?? 'default'}`);
   } catch (err) {
     writeOutput({
       status: 'error',

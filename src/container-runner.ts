@@ -381,6 +381,7 @@ export async function runContainerAgent(
     let parseBuffer = '';
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
+    let resolved = false;
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -423,7 +424,18 @@ export async function runContainerAgent(
             resetTimeout();
             // Call onOutput for all markers (including null results)
             // so idle timers start even for "silent" query completions.
-            outputChain = outputChain.then(() => onOutput(parsed));
+            outputChain = outputChain.then(() => onOutput(parsed)).then(() => {
+              // In streaming mode, resolve after first output so the caller
+              // (e.g. segment loop) can proceed. Container keeps running for IPC.
+              if (!resolved) {
+                resolved = true;
+                resolve({
+                  status: 'success',
+                  result: null,
+                  newSessionId,
+                });
+              }
+            });
           } catch (err) {
             logger.warn(
               { group: group.name, error: err },
@@ -516,13 +528,18 @@ export async function runContainerAgent(
             { group: group.name, containerName, duration, code },
             'Container timed out after output (idle cleanup)',
           );
-          outputChain.then(() => {
-            resolve({
-              status: 'success',
-              result: null,
-              newSessionId,
+          if (!resolved) {
+            outputChain.then(() => {
+              if (!resolved) {
+                resolved = true;
+                resolve({
+                  status: 'success',
+                  result: null,
+                  newSessionId,
+                });
+              }
             });
-          });
+          }
           return;
         }
 
@@ -531,11 +548,14 @@ export async function runContainerAgent(
           'Container timed out with no output',
         );
 
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Container timed out after ${configTimeout}ms`,
-        });
+        if (!resolved) {
+          resolved = true;
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Container timed out after ${configTimeout}ms`,
+          });
+        }
         return;
       }
 
@@ -610,11 +630,14 @@ export async function runContainerAgent(
           'Container exited with error',
         );
 
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
-        });
+        if (!resolved) {
+          resolved = true;
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
+          });
+        }
         return;
       }
 
@@ -625,11 +648,14 @@ export async function runContainerAgent(
             { group: group.name, duration, newSessionId },
             'Container completed (streaming mode)',
           );
-          resolve({
-            status: 'success',
-            result: null,
-            newSessionId,
-          });
+          if (!resolved) {
+            resolved = true;
+            resolve({
+              status: 'success',
+              result: null,
+              newSessionId,
+            });
+          }
         });
         return;
       }
@@ -663,7 +689,10 @@ export async function runContainerAgent(
           'Container completed',
         );
 
-        resolve(output);
+        if (!resolved) {
+          resolved = true;
+          resolve(output);
+        }
       } catch (err) {
         logger.error(
           {
@@ -675,11 +704,14 @@ export async function runContainerAgent(
           'Failed to parse container output',
         );
 
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
-        });
+        if (!resolved) {
+          resolved = true;
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
       }
     });
 
@@ -689,11 +721,14 @@ export async function runContainerAgent(
         { group: group.name, containerName, error: err },
         'Container spawn error',
       );
-      resolve({
-        status: 'error',
-        result: null,
-        error: `Container spawn error: ${err.message}`,
-      });
+      if (!resolved) {
+        resolved = true;
+        resolve({
+          status: 'error',
+          result: null,
+          error: `Container spawn error: ${err.message}`,
+        });
+      }
     });
   });
 }
