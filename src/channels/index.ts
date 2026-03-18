@@ -12,4 +12,7 @@ import './slack.js';
 // telegram
 import './telegram.js';
 
+// admin (integration testing & admin API)
+import './admin/index.js';
+
 // whatsapp

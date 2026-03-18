@@ -1,4 +1,16 @@
 {
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebFetch(domain:llmock.copilotkit.dev)"
+    ]
+  },
+  "enabledPlugins": {
+    "nanoclaw-skills@nanoclaw-skills": true
+  },
   "extraKnownMarketplaces": {
     "nanoclaw-skills": {
       "source": {
@@ -6,8 +18,5 @@
         "repo": "qwibitai/nanoclaw-skills"
       }
     }
-  },
-  "enabledPlugins": {
-    "nanoclaw-skills@nanoclaw-skills": true
   }
 }
