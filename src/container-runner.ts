@@ -357,8 +357,11 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   // Kill any idle containers from the previous turn for this group.
-  // Prevents port conflicts when dbExplorerPort is configured.
-  killGroupContainers(safeName);
+  // Only needed when dbExplorerPort is configured — that's the only case where
+  // an idle container's port binding blocks the new spawn.
+  if (group.containerConfig?.dbExplorerPort) {
+    killGroupContainers(safeName);
+  }
 
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {

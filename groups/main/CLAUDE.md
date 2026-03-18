@@ -258,40 +258,10 @@ The task will run in that group's context with access to their files and memory.
 |------|---------|
 | `repos.md` | Tracked GitHub repositories with descriptions |
 | `links.md` | Saved AI/agents article links with summaries |
-| `overmind-progress.md` | Overmind Agent research project tracker |
-| `digital-twin-qa-state.json` | State for digital-twin Q&A issue watcher |
 
 ---
 
 ## Active Projects & Automations
-
-### Automated GitHub Issue Agent
-- **Repos monitored:** `input-output-hk/ai-agents-platform`, `input-output-hk/nanoclaw`
-- **Labels:** `agent` (queue), `agent:in-progress`, `agent:done`, `agent:failed`
-- **Schedule:** Was hourly cron (`0 * * * *`), currently stopped to avoid session bloat
-- **Task ID:** `task-1773316608202-y8elzm` (completed/removed from DB)
-
-### Digital-Twin Q&A Watcher
-- **Repo:** `input-output-hk/digital-twin`
-- **Labels:** `question` (new), `question:answered` (watching for follow-ups), `question:failed`
-- **State file:** `digital-twin-qa-state.json`
-- **Schedule:** Was hourly cron (`0 * * * *`), currently stopped
-- **Task ID:** `task-1773321368346-p9oogk` (completed/removed from DB)
-
-### Deep Research Reports (completed)
-- **Lethal Trifecta v1:** `research/lethal-trifecta-mitigations.md` in ai-agents-platform (492 lines, 135 refs)
-- **Lethal Trifecta v2:** `research/lethal-trifecta-mitigations-v2.md` in ai-agents-platform (602 lines, 205 refs, citation QA'd)
-- **Overmind PRD:** [PR #4](https://github.com/input-output-hk/ai-agents-platform/pull/4) — `usecases/overmind-prd.md`
-- **Overmind Research:** [PR #5](https://github.com/input-output-hk/ai-agents-platform/pull/5) — `research/overmind-implementation-research.md` (375 lines, 105 refs)
-
-### Other completed work
-- Created `input-output-hk/ai-agents-platform` repo (private)
-- [Issue #1](https://github.com/input-output-hk/ai-agents-platform/issues/1) — Agent harness document
-- [Issue #2](https://github.com/input-output-hk/ai-agents-platform/issues/2) — Slack Bot integration request
-- Copied `deep-research` skill to `ai-knowledge-base/.claude/skills/`
-- Copied `learning-workspace-template` content to `ai-knowledge-base` — [PR #2](https://github.com/input-output-hk/ai-knowledge-base/pull/2)
-
----
 
 ## Session History Summary
 
@@ -320,3 +290,7 @@ The task will run in that group's context with access to their files and memory.
 - Overmind Agent research requested — session too bloated, first two attempts timed out (35min, 30min)
 - Overmind task eventually completed via isolated execution: PRD (PR #4) + deep research 105 refs (PR #5)
 - Session reset performed to clear context bloat
+
+### Session 141213f2 (Mar 15–18, 2026)
+
+[Full summary](sessions/session-summary-141213f2-2026-03-18.md) — port 4000 conflict fix, privilege model docs, Agent SDK mechanics, job market evaluation.
