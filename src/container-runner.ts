@@ -23,6 +23,7 @@ import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
+  killGroupContainers,
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
@@ -354,6 +355,10 @@ export async function runContainerAgent(
 
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
+
+  // Kill any idle containers from the previous turn for this group.
+  // Prevents port conflicts when dbExplorerPort is configured.
+  killGroupContainers(safeName);
 
   return new Promise((resolve) => {
     const container = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
