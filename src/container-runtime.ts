@@ -100,17 +100,22 @@ export function ensureContainerRuntimeRunning(): void {
   }
 }
 
+/** Returns names of running containers whose name contains the given filter string. */
+function listRunningContainers(nameFilter: string): string[] {
+  const output = execSync(
+    `${CONTAINER_RUNTIME_BIN} ps --filter name=${nameFilter} --format '{{.Names}}'`,
+    { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
+  );
+  return output.trim().split('\n').filter(Boolean);
+}
+
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
   try {
-    const output = execSync(
-      `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,
-      { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' },
-    );
-    const orphans = output.trim().split('\n').filter(Boolean);
+    const orphans = listRunningContainers('nanoclaw-');
     for (const name of orphans) {
       try {
-        execSync(stopContainer(name), { stdio: 'pipe' });
+        execSync(stopContainer(name), { stdio: 'pipe' }); // docker stop — graceful
       } catch {
         /* already stopped */
       }
@@ -123,5 +128,29 @@ export function cleanupOrphans(): void {
     }
   } catch (err) {
     logger.warn({ err }, 'Failed to clean up orphaned containers');
+  }
+}
+
+/** Kill any running containers for a specific group before spawning a new one.
+ *  Safe to SIGKILL: called only when state.active=false, meaning the container
+ *  has already emitted its response and is in IPC-idle mode. */
+export function killGroupContainers(safeName: string): void {
+  try {
+    const running = listRunningContainers(`nanoclaw-${safeName}-`);
+    for (const name of running) {
+      try {
+        execSync(`${CONTAINER_RUNTIME_BIN} kill ${name}`, { stdio: 'pipe' }); // docker kill — immediate
+      } catch {
+        /* already gone */
+      }
+    }
+    if (running.length > 0) {
+      logger.info(
+        { count: running.length, names: running, group: safeName },
+        'Killed idle group containers before new spawn',
+      );
+    }
+  } catch (err) {
+    logger.warn({ err, safeName }, 'Failed to kill idle group containers');
   }
 }
