@@ -1,5 +1,6 @@
 import { fork, type ChildProcess } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import http from 'http';
 
@@ -11,6 +12,7 @@ export interface HarnessOptions {
   adminPort?: number;     // default: 9877
   mockApiPort?: number;   // default: 9876 (0 = skip mock, use real API)
   mockFixtures?: MockFixture[];
+  assistantName?: string; // default: 'Andy'
 }
 
 interface ResponseEntry {
@@ -63,18 +65,18 @@ export class IntegrationHarness {
   private adminPort: number;
   private mockApiPort: number;
   private mockFixtures?: MockFixture[];
+  private _assistantName: string;
   private hostProc: ChildProcess | null = null;
   private mockServer: http.Server | null = null;
-  private envBackup: string | null = null;
-  private envPath: string;
   private baseUrl: string;
   private externalHost = false; // true when reusing an already-running host
+  private tempDir: string | null = null; // isolated store/groups/data for subprocess
 
   constructor(opts?: HarnessOptions) {
     this.adminPort = opts?.adminPort ?? 9877;
     this.mockApiPort = opts?.mockApiPort ?? 9876;
     this.mockFixtures = opts?.mockFixtures;
-    this.envPath = path.join(PROJECT_ROOT, '.env');
+    this._assistantName = opts?.assistantName ?? 'Andy';
     this.baseUrl = `http://localhost:${this.adminPort}`;
   }
 
@@ -83,31 +85,55 @@ export class IntegrationHarness {
     try {
       const body = await httpGet(`${this.baseUrl}/health`);
       const data = JSON.parse(body);
-      return data.status === 'ok';
+      if (data.status === 'ok') {
+        // Discover the real assistant name from the running host
+        if (data.assistantName) {
+          this._assistantName = data.assistantName;
+        }
+        return true;
+      }
+      return false;
     } catch {
       return false;
     }
   }
 
   async start(): Promise<void> {
-    // 1. Check if host is already running — reuse it
-    console.log('[harness] Checking if host is already running on port', this.adminPort);
-    if (await this.isHostRunning()) {
-      this.externalHost = true;
-      console.log('[harness] External host detected — reusing existing instance');
-      return;
+    // 1. Check if host is already running — reuse it only when not using mock
+    //    (external host has its own API config; mock requires a fresh subprocess)
+    if (this.mockApiPort === 0) {
+      console.log('[harness] Real API mode — checking if host is already running on port', this.adminPort);
+      if (await this.isHostRunning()) {
+        this.externalHost = true;
+        console.log('[harness] External host detected — reusing existing instance');
+        return;
+      }
+      throw new Error(
+        `Real API mode (mockApiPort=0) requires a running host on port ${this.adminPort}. ` +
+        `Start NanoClaw first, then re-run smoke tests.`,
+      );
+    } else {
+      console.log('[harness] Mock API mode — will start fresh host subprocess (port', this.adminPort, ')');
+      // If an external host is on our port, we can't proceed
+      if (await this.isHostRunning()) {
+        throw new Error(
+          `Port ${this.adminPort} is already in use by a running host. ` +
+          `Mock-based tests need their own subprocess. Either stop the host, ` +
+          `or use a different adminPort.`,
+        );
+      }
     }
     console.log('[harness] No running host found — will start a new instance');
 
-    // 2. Backup existing .env
-    console.log('[harness] Backing up .env');
-    try {
-      this.envBackup = fs.readFileSync(this.envPath, 'utf8');
-      console.log('[harness] Existing .env backed up');
-    } catch {
-      this.envBackup = null;
-      console.log('[harness] No existing .env to back up');
-    }
+    // 2. Create isolated temp directory for subprocess data (avoids SQLite conflicts with production)
+    this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-test-'));
+    const tempStoreDir = path.join(this.tempDir, 'store');
+    const tempGroupsDir = path.join(this.tempDir, 'groups');
+    const tempDataDir = path.join(this.tempDir, 'data');
+    fs.mkdirSync(tempStoreDir, { recursive: true });
+    fs.mkdirSync(tempGroupsDir, { recursive: true });
+    fs.mkdirSync(tempDataDir, { recursive: true });
+    console.log('[harness] Created isolated temp directory:', this.tempDir);
 
     // 3. Start mock API server (unless mockApiPort=0 for CI_SMOKE)
     if (this.mockApiPort > 0) {
@@ -118,27 +144,17 @@ export class IntegrationHarness {
       console.log('[harness] Skipping mock API server (mockApiPort=0, using real API)');
     }
 
-    // 4. Write test .env
-    console.log('[harness] Writing test .env');
+    // 4. Write test .env into temp directory (never touches production .env)
+    const tempEnvPath = path.join(this.tempDir, '.env');
     const envLines: string[] = [];
     if (this.mockApiPort > 0) {
       envLines.push(`ANTHROPIC_BASE_URL=http://localhost:${this.mockApiPort}`);
       envLines.push('ANTHROPIC_API_KEY=test-mock-key');
     }
-    // Preserve existing .env lines that we don't override
-    if (this.envBackup) {
-      const overrideKeys = new Set(envLines.map((l) => l.split('=')[0]));
-      for (const line of this.envBackup.split('\n')) {
-        const key = line.split('=')[0]?.trim();
-        if (key && !overrideKeys.has(key)) {
-          envLines.push(line);
-        }
-      }
-    }
-    fs.writeFileSync(this.envPath, envLines.join('\n') + '\n');
-    console.log('[harness] Test .env written');
+    fs.writeFileSync(tempEnvPath, envLines.join('\n') + '\n');
+    console.log('[harness] Test .env written to temp directory:', tempEnvPath);
 
-    // 5. Spawn host subprocess
+    // 5. Spawn host subprocess with isolated data directories and .env
     const distEntry = path.join(PROJECT_ROOT, 'dist', 'index.js');
     console.log('[harness] Spawning host subprocess:', distEntry);
     this.hostProc = fork(distEntry, [], {
@@ -146,7 +162,11 @@ export class IntegrationHarness {
       env: {
         ...process.env,
         ADMIN_CHANNEL_PORT: String(this.adminPort),
-        // Disable other channels so only admin channel is active
+        CREDENTIAL_PROXY_PORT: String(this.adminPort + 100), // avoid conflict with production proxy on 3001
+        STORE_DIR: tempStoreDir,
+        GROUPS_DIR: tempGroupsDir,
+        DATA_DIR: tempDataDir,
+        ENV_FILE: tempEnvPath, // subprocess reads this instead of production .env
         NODE_ENV: 'test',
       },
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
@@ -161,7 +181,7 @@ export class IntegrationHarness {
       process.stderr.write(`[host] ${d.toString()}`);
     });
 
-    // 6. Wait for health check
+    // 6. Wait for health check (matches original step numbering)
     console.log('[harness] Waiting for host health check (timeout: 30s)');
     await this.waitForHealth(30000);
     console.log('[harness] Host is healthy and ready');
@@ -190,24 +210,8 @@ export class IntegrationHarness {
     throw new Error(`Host did not become healthy within ${timeoutMs}ms (${attempts} attempts)`);
   }
 
-  /** Fetch the assistant name from the host's /health or config endpoint. Falls back to 'Andy'. */
-  async getAssistantName(): Promise<string> {
-    try {
-      const body = await httpGet(`${this.baseUrl}/health`);
-      const data = JSON.parse(body);
-      if (data.assistantName) return data.assistantName;
-    } catch {
-      // ignore
-    }
-    // Fallback: read ASSISTANT_NAME from .env
-    try {
-      const env = fs.readFileSync(this.envPath, 'utf8');
-      const match = env.match(/^ASSISTANT_NAME=(.+)$/m);
-      if (match) return match[1].trim();
-    } catch {
-      // ignore
-    }
-    return 'Andy';
+  getAssistantName(): string {
+    return this._assistantName;
   }
 
   async registerGroup(
@@ -300,17 +304,11 @@ export class IntegrationHarness {
       console.log('[harness] Mock API server stopped');
     }
 
-    // Restore .env
-    if (this.envBackup !== null) {
-      console.log('[harness] Restoring original .env');
-      fs.writeFileSync(this.envPath, this.envBackup);
-    } else {
-      console.log('[harness] Removing test .env');
-      try {
-        fs.unlinkSync(this.envPath);
-      } catch {
-        // didn't exist before, ignore
-      }
+    // Clean up temp directory (includes the test .env — production .env is never touched)
+    if (this.tempDir) {
+      console.log('[harness] Removing temp directory:', this.tempDir);
+      fs.rmSync(this.tempDir, { recursive: true, force: true });
+      this.tempDir = null;
     }
     console.log('[harness] Teardown complete');
   }

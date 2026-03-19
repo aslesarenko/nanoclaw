@@ -8,6 +8,7 @@ import os from 'os';
 import path from 'path';
 
 import {
+  CLAUDE_MODEL,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -142,6 +143,8 @@ function buildVolumeMounts(
       JSON.stringify(
         {
           env: {
+            // Use Opus as the default model for all agent invocations
+            CLAUDE_MODEL: 'claude-opus-4-6',
             // Enable agent swarms (subagent orchestration)
             // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
             CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
@@ -257,6 +260,9 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Default model for all agent invocations (overrides settings.json)
+  args.push('-e', `CLAUDE_MODEL=${CLAUDE_MODEL}`);
+
   // Expose the container's port 4000 for the database explorer UI if configured
   if (dbExplorerPort) args.push('-p', `${dbExplorerPort}:4000`);
 
@@ -347,6 +353,7 @@ export async function runContainerAgent(
     {
       group: group.name,
       containerName,
+      model: CLAUDE_MODEL,
       mountCount: mounts.length,
       isMain: input.isMain,
     },

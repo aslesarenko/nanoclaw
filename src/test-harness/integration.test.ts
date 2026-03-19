@@ -13,7 +13,7 @@ describe('integration: admin channel', () => {
   beforeAll(async () => {
     console.log('[test] === Setting up integration test suite ===');
     harness = new IntegrationHarness({
-      adminPort: 9877,
+      adminPort: 9879,   // different from production (9877) — mock needs its own host
       mockApiPort: 9876,
     });
 
@@ -22,7 +22,7 @@ describe('integration: admin channel', () => {
     console.log('[test] Harness started');
 
     // Discover the host's assistant name for trigger messages
-    triggerName = await harness.getAssistantName();
+    triggerName = harness.getAssistantName();
     console.log(`[test] Host assistant name: "${triggerName}" (trigger: @${triggerName})`);
 
     // Register a test group
@@ -86,70 +86,3 @@ describe('integration: admin channel', () => {
   }, 120000);
 });
 
-// CI_SMOKE: runs with real Anthropic API when CI_SMOKE=true
-const describeSmoke =
-  process.env.CI_SMOKE === 'true' ? describe : describe.skip;
-
-describeSmoke('smoke: real API', () => {
-  let smokeHarness: IntegrationHarness;
-  let triggerName: string;
-
-  beforeAll(async () => {
-    console.log('[smoke] === Setting up smoke test suite ===');
-    smokeHarness = new IntegrationHarness({
-      adminPort: 9878,
-      mockApiPort: 0, // 0 = no mock, use real ANTHROPIC_API_KEY from .env
-    });
-
-    console.log('[smoke] Starting harness (real API)...');
-    await smokeHarness.start();
-    console.log('[smoke] Harness started');
-
-    triggerName = await smokeHarness.getAssistantName();
-    console.log(`[smoke] Host assistant name: "${triggerName}"`);
-
-    console.log('[smoke] Registering smoke group...');
-    await smokeHarness.registerGroup('admin:smoke-group', {
-      name: 'Smoke Group',
-      folder: 'test-smoke',
-      trigger: `@${triggerName}`,
-      requiresTrigger: true,
-    });
-    console.log('[smoke] Smoke group registered');
-    console.log('[smoke] === Setup complete ===');
-  }, 60000);
-
-  afterAll(async () => {
-    console.log('[smoke] === Tearing down smoke test suite ===');
-    await smokeHarness.stop();
-    console.log('[smoke] === Teardown complete ===');
-  }, 15000);
-
-  it('gets real Claude response', async () => {
-    console.log('[smoke] --- Test: real Claude response ---');
-    const since = new Date().toISOString();
-    console.log(`[smoke] Since timestamp: ${since}`);
-
-    const triggerMsg = `@${triggerName} say hello`;
-    console.log(`[smoke] Injecting message: "${triggerMsg}"`);
-    await smokeHarness.injectMessage(
-      'admin:smoke-group',
-      triggerMsg,
-      'admin:user123',
-    );
-
-    console.log('[smoke] Waiting for response (awaitCount=1, timeout=90s)...');
-    const responses = await smokeHarness.waitForResponse(
-      'admin:smoke-group',
-      since,
-      { awaitCount: 1, timeoutMs: 90000 },
-    );
-
-    console.log(`[smoke] Got ${responses.length} response(s)`);
-    if (responses.length > 0) {
-      console.log(`[smoke] First response (truncated): "${responses[0].substring(0, 200)}"`);
-    }
-    expect(responses.length).toBeGreaterThan(0);
-    console.log('[smoke] --- Test passed ---');
-  }, 120000);
-});

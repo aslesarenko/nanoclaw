@@ -5,7 +5,8 @@
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:docs.anthropic.com)",
-      "WebFetch(domain:llmock.copilotkit.dev)"
+      "WebFetch(domain:llmock.copilotkit.dev)",
+      "Bash(CI_SMOKE=true npm run test:integration)"
     ]
   },
   "enabledPlugins": {
