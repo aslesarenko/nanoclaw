@@ -6,7 +6,16 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:docs.anthropic.com)",
       "WebFetch(domain:llmock.copilotkit.dev)",
-      "Bash(CI_SMOKE=true npm run test:integration)"
+      "Bash(CI_SMOKE=true npm run test:integration)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(git ls-tree:*)",
+      "Bash(git ls-remote:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git log:*)",
+      "Read(~/.claude/**)",
+      "Read(~/.claude/projects/**)",
+      "Bash(python3 -m json.tool)",
+      "Bash(gh pr:*)"
     ]
   },
   "enabledPlugins": {
